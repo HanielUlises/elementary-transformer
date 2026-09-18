@@ -1,0 +1,22 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it using the metadata below."
+type: software
+title: "elementary-transformer"
+abstract: >-
+  Generation of pairs of finite relational structures labelled by equivalence
+  in the k-variable fragment of first-order logic with bounded quantifier rank,
+  with exact Ehrenfeucht-Fraisse game solving, extraction of distinguishing
+  formulas and their independent verification.
+authors:
+  - family-names: "Vasquez Morales"
+    given-names: "Haniel Ulises"
+    alias: "HanielUlises"
+    website: "https://github.com/HanielUlises"
+version: "0.1.0"
+license: MIT
+keywords:
+  - finite model theory
+  - Ehrenfeucht-Fraisse games
+  - Weisfeiler-Leman
+  - first-order logic
+  - transformers
