@@ -1,0 +1,19 @@
+name = "elementary_transformer_legacy"
+version = "0.1.0"
+keywords = ["graph", "neuro-symbolic", "form-content", "lean-verification"]
+license = "MIT"
+
+[[require]]
+name = "mathlib"
+git = "https://github.com/leanprover-community/mathlib4"
+rev = "master"
+
+[[require]]
+name = "PropLogicDSL"
+git = "https://github.com/HanielUlises/lean-logic-dsl"
+rev = "main"
+
+[[lean_lib]]
+name = "Legacy"
+roots = ["reasoning"]
+globs = ["reasoning.SymbolicKernel", "reasoning.GraphVerifier"]

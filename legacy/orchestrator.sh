@@ -34,7 +34,7 @@ step_bridge() {
 step_lean() {
     log "step 3/4: form — lake build"
     cd "$ROOT"
-    $LAKE build morpheus
+    $LAKE build Legacy
 }
 
 step_verify() {

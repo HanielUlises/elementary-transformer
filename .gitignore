@@ -21,7 +21,7 @@ venv/
 *.ckpt
 
 # Bridge output (generated, not source)
-bridge/lean_input.json
+legacy/bridge/lean_input.json
 
 # Editor
 .vscode/

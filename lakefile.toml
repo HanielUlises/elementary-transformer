@@ -1,19 +1,14 @@
-name = "morpheus"
+name = "elementary_transformer"
 version = "0.1.0"
-keywords = ["graph", "neuro-symbolic", "form-content", "lean-verification"]
+keywords = ["finite-model-theory", "first-order-logic", "ehrenfeucht-fraisse", "lean-verification"]
 license = "MIT"
-
-[[require]]
-name = "mathlib"
-git = "https://github.com/leanprover-community/mathlib4"
-rev = "master"
-
-[[require]]
-name = "PropLogicDSL"
-git = "https://github.com/HanielUlises/lean-logic-dsl"
-rev = "main"
+defaultTargets = ["ElementaryTransformer", "et-check"]
 
 [[lean_lib]]
-name = "morpheus"
-roots = ["reasoning"]
-globs = ["reasoning.SymbolicKernel", "reasoning.GraphVerifier"]
+name = "ElementaryTransformer"
+srcDir = "lean"
+
+[[lean_exe]]
+name = "et-check"
+srcDir = "lean"
+root = "Main"

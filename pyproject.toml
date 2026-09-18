@@ -1,0 +1,46 @@
+[build-system]
+requires = ["scikit-build-core>=0.10", "pybind11>=2.10"]
+build-backend = "scikit_build_core.build"
+
+[project]
+name = "elementary-transformer"
+version = "0.1.0"
+description = "Pairs of finite structures labelled by FO^k equivalence of bounded quantifier rank, with verified distinguishing formulas"
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.10"
+authors = [{ name = "Haniel Ulises Vasquez Morales" }]
+maintainers = [{ name = "Haniel Ulises Vasquez Morales" }]
+keywords = [
+  "finite model theory",
+  "Ehrenfeucht-Fraisse games",
+  "Weisfeiler-Leman",
+  "first-order logic",
+  "transformers",
+]
+classifiers = [
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: C++",
+  "Topic :: Scientific/Engineering :: Mathematics",
+]
+dependencies = ["numpy>=1.24", "jax>=0.4.20"]
+
+[project.optional-dependencies]
+test = ["pytest>=7"]
+
+[project.scripts]
+elementary-transformer = "elementary_transformer.cli:main"
+
+[tool.scikit-build]
+minimum-version = "0.10"
+build-dir = "build/{wheel_tag}"
+cmake.build-type = "Release"
+wheel.packages = ["src/elementary_transformer"]
+
+[tool.scikit-build.cmake.define]
+ET_BUILD_PYTHON = "ON"
+ET_BUILD_TESTS = "OFF"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
