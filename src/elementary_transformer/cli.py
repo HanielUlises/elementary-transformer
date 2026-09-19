@@ -1,4 +1,4 @@
-"""Command-line interface: ``elementary-transformer {generate,solve,wl,inspect}``."""
+"""Command-line interface: ``elementary-transformer {generate,solve,wl,inspect,train,baselines,report}``."""
 
 from __future__ import annotations
 
@@ -88,7 +88,7 @@ def cmd_generate(args: argparse.Namespace) -> int:
         wl_labels=not args.no_wl,
         lean_verify=args.lean_verify,
     )
-    manifest = build_dataset(config, args.out, log=lambda m: print(m, file=sys.stderr))
+    manifest = build_dataset(config, args.out, workers=args.workers, log=lambda m: print(m, file=sys.stderr))
     print(json.dumps({name: s["counts"] for name, s in manifest["splits"].items()}, indent=2))
     return 0
 
@@ -157,6 +157,48 @@ def cmd_inspect(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_train(args: argparse.Namespace) -> int:
+    from .train import TrainConfig, train
+
+    config = TrainConfig(
+        data=args.data,
+        out=args.out,
+        d_model=args.d_model,
+        heads=args.heads,
+        layers=args.layers,
+        d_ff=args.d_ff,
+        decoder_layers=args.decoder_layers,
+        max_formula_len=args.max_formula_len,
+        batch_size=args.batch_size,
+        epochs=args.epochs,
+        lr=args.lr,
+        warmup=args.warmup,
+        formula_weight=args.formula_weight,
+        seed=args.seed,
+        synthesis_limit=args.synthesis_limit,
+    )
+    train(config, log=lambda m: print(m, flush=True))
+    return 0
+
+
+def cmd_report(args: argparse.Namespace) -> int:
+    from .train import report
+
+    print(json.dumps(report(args.runs), indent=2))
+    return 0
+
+
+def cmd_baselines(args: argparse.Namespace) -> int:
+    from .train import baselines
+
+    result = baselines(args.data)
+    text = json.dumps(result, indent=2)
+    if args.out:
+        Path(args.out).write_text(text)
+    print(text)
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="elementary-transformer",
@@ -184,6 +226,7 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--test", type=int, default=200, help="number of examples of each test split")
     g.add_argument("--seed", type=int, default=0)
     g.add_argument("--shard-size", type=int, default=1000)
+    g.add_argument("--workers", type=int, default=1, help="number of worker processes (does not change the result)")
     g.add_argument("--max-attempts-factor", type=int, default=50, help="sampling budget per requested example")
     g.add_argument("--no-relabel", action="store_true", help="keep the vertex labelling produced by the generators")
     g.add_argument("--no-wl", action="store_true", help="skip the C^k labels")
@@ -208,6 +251,33 @@ def build_parser() -> argparse.ArgumentParser:
     i = sub.add_parser("inspect", help="summarise a generated dataset")
     i.add_argument("dir")
     i.set_defaults(func=cmd_inspect)
+
+    t = sub.add_parser("train", help="train the axial tuple transformer on a dataset")
+    t.add_argument("--data", required=True)
+    t.add_argument("--out", required=True)
+    t.add_argument("--d-model", type=int, default=128)
+    t.add_argument("--heads", type=int, default=4)
+    t.add_argument("--layers", type=int, default=6)
+    t.add_argument("--d-ff", type=int, default=256)
+    t.add_argument("--decoder-layers", type=int, default=3)
+    t.add_argument("--max-formula-len", type=int, default=256)
+    t.add_argument("--batch-size", type=int, default=32)
+    t.add_argument("--epochs", type=int, default=10)
+    t.add_argument("--lr", type=float, default=5e-4)
+    t.add_argument("--warmup", type=int, default=500)
+    t.add_argument("--formula-weight", type=float, default=1.0)
+    t.add_argument("--seed", type=int, default=0)
+    t.add_argument("--synthesis-limit", type=int, default=500, help="examples per split used to evaluate synthesis")
+    t.set_defaults(func=cmd_train)
+
+    b = sub.add_parser("baselines", help="evaluate majority and Weisfeiler-Leman decision rules on a dataset")
+    b.add_argument("--data", required=True)
+    b.add_argument("--out", help="write the result to this JSON file")
+    b.set_defaults(func=cmd_baselines)
+
+    r = sub.add_parser("report", help="aggregate the results of several training runs")
+    r.add_argument("runs", nargs="+")
+    r.set_defaults(func=cmd_report)
     return parser
 
 

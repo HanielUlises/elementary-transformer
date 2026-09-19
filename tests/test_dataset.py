@@ -139,3 +139,26 @@ def test_padded_batches(small_dataset):
     assert batch["left"].shape[0] == 4
     assert int(batch["left_mask"].sum()) == sum(len(e["left_tokens"]) for e in examples)
     assert bool((batch["left"][~batch["left_mask"]] == vocab_size).all())
+
+
+def test_baselines_and_report(small_dataset, tmp_path):
+    import json
+
+    from elementary_transformer import train as tr
+
+    out, manifest = small_dataset
+    result = tr.baselines(out)
+    assert set(result["splits"]) == set(manifest["splits"])
+    for stats in result["splits"].values():
+        assert 0.0 <= stats["wl1_decision_accuracy"] <= 1.0
+        assert 0.0 <= stats["counting_decision_accuracy"] <= 1.0
+    runs = []
+    for seed, value in enumerate((0.5, 0.7)):
+        run = tmp_path / f"seed{seed}"
+        run.mkdir()
+        split = {"classification": {"q_star_accuracy": value, "per_stratum": {"2": {"q_star_accuracy": value}}}}
+        (run / "results.json").write_text(json.dumps({"splits": {"val": split}}))
+        runs.append(run)
+    summary = tr.report(runs)
+    assert summary["splits"]["val"]["q_star_accuracy"]["mean"] == pytest.approx(0.6)
+    assert summary["splits"]["val"]["per_stratum_q_star_accuracy"]["2"]["runs"] == 2
