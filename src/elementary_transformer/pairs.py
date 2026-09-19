@@ -12,11 +12,10 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
-import jax
 import numpy as np
 
 from . import generators as gen
-from .generators import KeyLike, as_key
+from .generators import KeyLike, as_rng
 from .structures import Structure, adjacency, graph_from_adjacency
 
 
@@ -33,10 +32,10 @@ class StructurePair:
 
     def relabelled(self, key: KeyLike) -> StructurePair:
         """Apply independent random permutations to both structures."""
-        k1, k2 = jax.random.split(as_key(key))
+        rng = as_rng(key)
         return StructurePair(
-            self.left.permute(gen.random_permutation(k1, self.left.size)),
-            self.right.permute(gen.random_permutation(k2, self.right.size)),
+            self.left.permute(rng.permutation(self.left.size)),
+            self.right.permute(rng.permutation(self.right.size)),
             self.family,
             self.construction,
             self.params,
@@ -48,9 +47,9 @@ def edge_flip(key: KeyLike, g: Structure) -> Structure:
     n = g.size
     if n < 2:
         raise ValueError("need at least two vertices")
-    k1, k2 = jax.random.split(as_key(key))
-    u = int(jax.random.randint(k1, (), 0, n))
-    v = int(jax.random.randint(k2, (), 0, n - 1))
+    rng = as_rng(key)
+    u = int(rng.integers(0, n))
+    v = int(rng.integers(0, n - 1))
     v = v + 1 if v >= u else v
     a = adjacency(g).copy()
     a[u, v] = a[v, u] = not a[u, v]
@@ -67,14 +66,13 @@ def edge_swap(key: KeyLike, g: Structure, max_tries: int = 1000) -> Structure | 
     edges = np.argwhere(np.triu(a, 1))
     if len(edges) < 2:
         return None
-    key = as_key(key)
+    rng = as_rng(key)
     for _ in range(max_tries):
-        key, k1, k2, k3 = jax.random.split(key, 4)
-        i, j = (int(x) for x in jax.random.choice(k1, len(edges), (2,), replace=False))
+        i, j = (int(x) for x in rng.choice(len(edges), 2, replace=False))
         (p, q), (r, s) = edges[i], edges[j]
-        if bool(jax.random.bernoulli(k2)):
+        if rng.random() < 0.5:
             p, q = q, p
-        if bool(jax.random.bernoulli(k3)):
+        if rng.random() < 0.5:
             r, s = s, r
         if len({int(p), int(q), int(r), int(s)}) < 4 or a[p, s] or a[r, q]:
             continue
@@ -131,5 +129,5 @@ def cfi_pair(base_name: str, base: Structure, *, twisted: bool = True) -> Struct
 
 def regular_pair(key: KeyLike, n: int, d: int) -> StructurePair:
     """Two independent uniform d-regular graphs; colour refinement never separates them."""
-    k1, k2 = jax.random.split(as_key(key))
-    return StructurePair(gen.random_regular(k1, n, d), gen.random_regular(k2, n, d), "regular", "independent", {"d": d})
+    rng = as_rng(key)
+    return StructurePair(gen.random_regular(rng, n, d), gen.random_regular(rng, n, d), "regular", "independent", {"d": d})

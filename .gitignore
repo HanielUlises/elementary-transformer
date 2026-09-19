@@ -32,3 +32,6 @@ legacy/bridge/lean_input.json
 # OS
 .DS_Store
 Thumbs.db
+# Generated datasets and training runs
+data/
+runs/

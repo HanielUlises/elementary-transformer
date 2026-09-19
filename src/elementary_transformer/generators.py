@@ -1,8 +1,10 @@
 """Families of finite structures.
 
-Random generators take a JAX PRNG key (or an integer seed), so every sample of
-a dataset is reproducible from the global seed and its index through
-``jax.random.fold_in``.
+Random generators take a JAX PRNG key, an integer seed or a NumPy generator.
+Keys are derived from the global seed of a dataset with ``jax.random.fold_in``,
+so every sample is reproducible from the seed and its index; a generator then
+seeds one NumPy generator from the bits of its key, which keeps the inner
+sampling loops free of per-call dispatch overhead.
 """
 
 from __future__ import annotations
@@ -13,15 +15,21 @@ import subprocess
 from collections.abc import Iterable, Iterator, Sequence
 
 import jax
+import jax.numpy as jnp
 import numpy as np
 
 from .structures import ORDER, Structure, adjacency, graph, graph_from_adjacency
 
-KeyLike = jax.Array | int
+KeyLike = jax.Array | int | np.random.Generator
 
 
-def as_key(key: KeyLike) -> jax.Array:
-    return jax.random.PRNGKey(key) if isinstance(key, int) else key
+def as_rng(key: KeyLike) -> np.random.Generator:
+    """A NumPy generator seeded from a JAX key or an integer seed; generators are returned unchanged."""
+    if isinstance(key, np.random.Generator):
+        return key
+    if isinstance(key, int):
+        key = jax.random.PRNGKey(key)
+    return np.random.default_rng(np.asarray(jax.random.bits(key, (4,), dtype=jnp.uint32)))
 
 
 # ---------------------------------------------------------------------------
@@ -176,8 +184,7 @@ def strongly_regular_pairs() -> list[tuple[str, Structure, str, Structure]]:
 
 def gnp(key: KeyLike, n: int, p: float) -> Structure:
     """Erdős–Rényi–Gilbert random graph G(n, p)."""
-    coins = np.asarray(jax.random.bernoulli(as_key(key), p, (n, n)))
-    upper = np.triu(coins, 1)
+    upper = np.triu(as_rng(key).random((n, n)) < p, 1)
     return graph_from_adjacency(upper | upper.T)
 
 
@@ -195,11 +202,10 @@ def random_regular(key: KeyLike, n: int, d: int, max_tries: int = 100_000) -> St
     """
     if not 0 <= d < n or (n * d) % 2:
         raise ValueError("need 0 <= d < n and n * d even")
-    key = as_key(key)
+    rng = as_rng(key)
     points = np.repeat(np.arange(n), d)
     for _ in range(max_tries):
-        key, sub = jax.random.split(key)
-        perm = np.asarray(jax.random.permutation(sub, n * d))
+        perm = rng.permutation(n * d)
         u, v = points[perm[0::2]], points[perm[1::2]]
         if np.any(u == v):
             continue
@@ -226,17 +232,16 @@ def is_connected(g: Structure) -> bool:
 
 
 def random_connected_cubic(key: KeyLike, m: int, max_tries: int = 1000) -> Structure:
-    key = as_key(key)
+    rng = as_rng(key)
     for _ in range(max_tries):
-        key, sub = jax.random.split(key)
-        g = random_regular(sub, m, 3)
+        g = random_regular(rng, m, 3)
         if is_connected(g):
             return g
     raise RuntimeError("no connected cubic graph found")
 
 
 def random_permutation(key: KeyLike, n: int) -> np.ndarray:
-    return np.asarray(jax.random.permutation(as_key(key), n))
+    return as_rng(key).permutation(n)
 
 
 # ---------------------------------------------------------------------------

@@ -21,7 +21,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from .generators import KeyLike, as_key
+from .generators import KeyLike, as_rng
 from .structures import RelationSymbol, Signature, Structure
 
 
@@ -69,9 +69,9 @@ class KripkeModel:
 
 def random_kripke(key: KeyLike, n: int, agents: int, letters: int, p_edge: float, p_letter: float = 0.5) -> KripkeModel:
     """Worlds with independent random accessibility edges and valuation bits."""
-    k1, k2 = jax.random.split(as_key(key))
-    access = np.asarray(jax.random.bernoulli(k1, p_edge, (agents, n, n)))
-    valuation = np.asarray(jax.random.bernoulli(k2, p_letter, (n, letters)))
+    rng = as_rng(key)
+    access = rng.random((agents, n, n)) < p_edge
+    valuation = rng.random((n, letters)) < p_letter
     return KripkeModel(tuple(access[a] for a in range(agents)), valuation)
 
 

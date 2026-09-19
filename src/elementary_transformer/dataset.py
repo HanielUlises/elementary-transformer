@@ -22,9 +22,11 @@ the examples are stratified by ``q_star``.
 from __future__ import annotations
 
 import json
+import multiprocessing
+import os
 import time
 from collections.abc import Iterator, Sequence
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -73,6 +75,7 @@ class DatasetConfig:
     wl_labels: bool = True
     lean_verify: bool = False
     max_formula_size: int = 5000
+    chunk_size: int = 250
 
     def validate(self) -> None:
         if self.k < 1 or self.q_max < 1:
@@ -131,26 +134,25 @@ def split_specs(config: DatasetConfig) -> list[SplitSpec]:
 # Candidate pairs
 
 
-def _randint(key: jax.Array, low: int, high: int) -> int:
+def _randint(rng: np.random.Generator, low: int, high: int) -> int:
     """Uniform integer in [low, high]."""
-    return int(jax.random.randint(key, (), low, high + 1))
+    return int(rng.integers(low, high + 1))
 
 
-def _choice(key: jax.Array, options: Sequence[Any]) -> Any:
-    return options[_randint(key, 0, len(options) - 1)]
+def _choice(rng: np.random.Generator, options: Sequence[Any]) -> Any:
+    return options[_randint(rng, 0, len(options) - 1)]
 
 
-def _cycle_lengths(key: jax.Array, n: int) -> list[int]:
+def _cycle_lengths(rng: np.random.Generator, n: int) -> list[int]:
     """A random partition of n into parts of size at least 3 (at most three parts)."""
-    k1, k2, k3 = jax.random.split(key, 3)
-    parts = _randint(k1, 1, max(1, min(3, n // 3)))
+    parts = _randint(rng, 1, max(1, min(3, n // 3)))
     if parts == 1:
         return [n]
     if parts == 2:
-        a = _randint(k2, 3, n - 3)
+        a = _randint(rng, 3, n - 3)
         return sorted([a, n - a])
-    a = _randint(k2, 3, n - 6)
-    b = _randint(k3, 3, n - a - 3)
+    a = _randint(rng, 3, n - 6)
+    b = _randint(rng, 3, n - a - 3)
     return sorted([a, b, n - a - b])
 
 
@@ -163,61 +165,61 @@ def _geng_graphs(n: int) -> list[Structure]:
     return _GENG_CACHE[n]
 
 
-def sample_pair(family: str, key: jax.Array, sizes: tuple[int, int]) -> pairs.StructurePair | None:
+def sample_pair(family: str, key: gen.KeyLike, sizes: tuple[int, int]) -> pairs.StructurePair | None:
     """One candidate pair from ``family`` with universes in ``sizes`` (``None`` if the draw does not apply)."""
-    keys = jax.random.split(key, 6)
+    rng = gen.as_rng(key)
     lo, hi = sizes
 
     if family == "linear_order":
-        m = _randint(keys[0], lo, hi)
-        if bool(jax.random.bernoulli(keys[1])):
-            n = min(hi, m + _randint(keys[2], 0, 3))
+        m = _randint(rng, lo, hi)
+        if rng.random() < 0.5:
+            n = min(hi, m + _randint(rng, 0, 3))
         else:
-            n = _randint(keys[2], lo, hi)
+            n = _randint(rng, lo, hi)
         return pairs.linear_order_pair(m, n)
 
     if family == "cycles":
         lo = max(lo, 3)
         if lo > hi:
             return None
-        n = _randint(keys[0], lo, hi)
-        return pairs.cycle_pair(_cycle_lengths(keys[1], n), _cycle_lengths(keys[2], n))
+        n = _randint(rng, lo, hi)
+        return pairs.cycle_pair(_cycle_lengths(rng, n), _cycle_lengths(rng, n))
 
     if family in ("gnp", "sparse"):
         lo = max(lo, 4)
         if lo > hi:
             return None
-        n = _randint(keys[0], lo, hi)
+        n = _randint(rng, lo, hi)
         if family == "gnp":
             params: dict[str, Any] = {"p": 0.5}
-            g = gen.gnp(keys[1], n, 0.5)
+            g = gen.gnp(rng, n, 0.5)
         else:
-            c = _choice(keys[2], [1.0, 2.0, 3.0])
+            c = _choice(rng, [1.0, 2.0, 3.0])
             params = {"c": c}
-            g = gen.sparse_gnp(keys[1], n, c)
-        construction = _choice(keys[3], ["edge_flip", "edge_swap", "isomorphic"])
-        return pairs.mutation_pair(keys[4], g, family, construction, params)
+            g = gen.sparse_gnp(rng, n, c)
+        construction = _choice(rng, ["edge_flip", "edge_swap", "isomorphic"])
+        return pairs.mutation_pair(rng, g, family, construction, params)
 
     if family == "regular":
         lo = max(lo, 4)
         if lo > hi:
             return None
-        n = _randint(keys[0], lo, hi)
-        d = _choice(keys[1], [2, 3, 4])
+        n = _randint(rng, lo, hi)
+        d = _choice(rng, [2, 3, 4])
         if d >= n or (n * d) % 2:
             return None
-        construction = _choice(keys[2], ["independent", "edge_swap", "isomorphic"])
+        construction = _choice(rng, ["independent", "edge_swap", "isomorphic"])
         if construction == "independent":
-            return pairs.regular_pair(keys[3], n, d)
-        return pairs.mutation_pair(keys[4], gen.random_regular(keys[3], n, d), "regular", construction, {"d": d})
+            return pairs.regular_pair(rng, n, d)
+        return pairs.mutation_pair(rng, gen.random_regular(rng, n, d), "regular", construction, {"d": d})
 
     if family == "geng":
         lo, hi = max(lo, 2), min(hi, 9)
         if lo > hi:
             return None
-        n = _randint(keys[0], lo, hi)
+        n = _randint(rng, lo, hi)
         graphs = _geng_graphs(n)
-        i, j = _randint(keys[1], 0, len(graphs) - 1), _randint(keys[2], 0, len(graphs) - 1)
+        i, j = _randint(rng, 0, len(graphs) - 1), _randint(rng, 0, len(graphs) - 1)
         return pairs.StructurePair(graphs[i], graphs[j], "geng", "enumerated", {"n": n, "i": i, "j": j})
 
     if family == "cfi":
@@ -225,21 +227,21 @@ def sample_pair(family: str, key: jax.Array, sizes: tuple[int, int]) -> pairs.St
         bases = [(name, b) for name, b in bases if lo <= 10 * b.size <= hi]
         if not bases:
             return None
-        name, base = _choice(keys[0], bases)
-        construction = _choice(keys[1], ["twist", "double_twist", "edge_flip", "edge_swap"])
+        name, base = _choice(rng, bases)
+        construction = _choice(rng, ["twist", "double_twist", "edge_flip", "edge_swap"])
         if construction in ("twist", "double_twist"):
             return pairs.cfi_pair(name, base, twisted=construction == "twist")
-        return pairs.mutation_pair(keys[2], gen.cfi_graph(base), "cfi", construction, {"base": name})
+        return pairs.mutation_pair(rng, gen.cfi_graph(base), "cfi", construction, {"base": name})
 
     if family == "srg":
         candidates = [(na, a, nb, b) for na, a, nb, b in gen.strongly_regular_pairs() if lo <= a.size <= hi]
         if not candidates:
             return None
-        construction = _choice(keys[0], ["cospectral_pair", "edge_flip", "edge_swap", "isomorphic"])
-        na, a, nb, b = _choice(keys[1], candidates)
+        construction = _choice(rng, ["cospectral_pair", "edge_flip", "edge_swap", "isomorphic"])
+        na, a, nb, b = _choice(rng, candidates)
         if construction == "cospectral_pair":
             return pairs.StructurePair(a, b, "srg", "same_parameters", {"left": na, "right": nb})
-        return pairs.mutation_pair(keys[2], a, "srg", construction, {"graph": na})
+        return pairs.mutation_pair(rng, a, "srg", construction, {"graph": na})
 
     raise ValueError(f"unknown family {family!r}")
 
@@ -333,40 +335,41 @@ def _even_quotas(total: int, strata: Sequence[int | None]) -> dict[int | None, i
 def generate_split(spec: SplitSpec, config: DatasetConfig, key: jax.Array) -> tuple[list[Example], dict[str, Any]]:
     """Rejection sampling of labelled pairs with one quota per value of ``q_star``.
 
-    Quotas start equal. When half of the sampling budget is spent, strata
-    that have not received a single example are dropped and their quota is
-    shared among the others, so that rare or unreachable ranks do not
-    exhaust the budget. The manifest records the dropped strata.
+    Quotas start equal. When half of the sampling budget is spent, the quota
+    of every stratum is capped at twice its current count, which is what its
+    observed rate can reach with the remaining budget, and the freed quota is
+    shared among the strata that are on track. Rare or unreachable ranks thus
+    do not exhaust the budget, and the manifest records the adjusted strata.
     """
     strata = list(spec.strata)
     quotas = _even_quotas(spec.target, strata)
     counts: dict[int | None, int] = {s: 0 for s in strata}
-    dropped: list[int | None] = []
+    adjusted: list[int | None] = []
     attempts = 0
     max_attempts = config.max_attempts_factor * spec.target
     examples: list[Example] = []
     families_seen: dict[str, int] = {}
     while any(counts[s] < quotas[s] for s in strata) and attempts < max_attempts:
         if attempts == max_attempts // 2:
-            empty = [s for s in strata if counts[s] == 0]
-            live = [s for s in strata if counts[s] > 0]
-            if empty and live:
-                extra = _even_quotas(sum(quotas[s] for s in empty), live)
-                for s in empty:
-                    quotas[s] = 0
-                for s in live:
+            short = [s for s in strata if 2 * counts[s] < quotas[s]]
+            on_track = [s for s in strata if 2 * counts[s] >= quotas[s]]
+            if short and on_track:
+                freed = sum(quotas[s] - 2 * counts[s] for s in short)
+                for s in short:
+                    quotas[s] = 2 * counts[s]
+                extra = _even_quotas(freed, on_track)
+                for s in on_track:
                     quotas[s] += extra[s]
-                dropped.extend(empty)
-        sub = jax.random.fold_in(key, attempts)
+                adjusted.extend(short)
+        rng = gen.as_rng(jax.random.fold_in(key, attempts))
         attempts += 1
-        k_family, k_pair, k_relabel, k_swap = jax.random.split(sub, 4)
-        family = _choice(k_family, spec.families)
-        pair = sample_pair(family, k_pair, spec.sizes)
+        family = _choice(rng, spec.families)
+        pair = sample_pair(family, rng, spec.sizes)
         if pair is None:
             continue
         if config.relabel:
-            pair = pair.relabelled(k_relabel)
-        if bool(jax.random.bernoulli(k_swap)):
+            pair = pair.relabelled(rng)
+        if rng.random() < 0.5:
             pair = pair.swapped()
         result = games.solve(pair.left, pair.right, config.k, config.q_max, extract_formula=False)
         q = result.q_star
@@ -389,7 +392,8 @@ def generate_split(spec: SplitSpec, config: DatasetConfig, key: jax.Array) -> tu
         "attempts": attempts,
         "quotas": {_stratum_name(s): quotas[s] for s in strata},
         "counts": {_stratum_name(s): counts[s] for s in strata},
-        "dropped_strata": [_stratum_name(s) for s in dropped],
+        "adjusted_strata": [_stratum_name(s) for s in adjusted],
+        "final_quotas": {_stratum_name(s): quotas[s] for s in strata},
         "families": families_seen,
         "sizes": list(spec.sizes),
     }
@@ -488,14 +492,47 @@ def write_shard(
             f.write(json.dumps(ex.metadata(f"{split}-{start + i:07d}")) + "\n")
 
 
-def build_dataset(config: DatasetConfig, out_dir: str | Path, *, log: Any = None) -> dict[str, Any]:
-    """Generate every split of the protocol and write it under ``out_dir``."""
+def _generate_chunk(task: tuple[SplitSpec, DatasetConfig, int, int]) -> tuple[list[Example], dict[str, Any]]:
+    spec, config, split_index, chunk_index = task
+    key = jax.random.fold_in(jax.random.fold_in(jax.random.PRNGKey(config.seed), split_index), chunk_index)
+    result = generate_split(spec, config, key)
+    # Labelling compiles many small kernels, one per array shape; release them between chunks.
+    jax.clear_caches()
+    return result
+
+
+def _merge_stats(spec: SplitSpec, parts: Sequence[dict[str, Any]]) -> dict[str, Any]:
+    counts: dict[str, int] = {}
+    families: dict[str, int] = {}
+    for part in parts:
+        for name, c in part["counts"].items():
+            counts[name] = counts.get(name, 0) + c
+        for name, c in part["families"].items():
+            families[name] = families.get(name, 0) + c
+    return {
+        "target": spec.target,
+        "generated": sum(p["generated"] for p in parts),
+        "attempts": sum(p["attempts"] for p in parts),
+        "chunks": len(parts),
+        "counts": counts,
+        "adjusted_strata": sorted({d for p in parts for d in p["adjusted_strata"]}),
+        "families": families,
+        "sizes": list(spec.sizes),
+    }
+
+
+def build_dataset(config: DatasetConfig, out_dir: str | Path, *, workers: int = 1, log: Any = None) -> dict[str, Any]:
+    """Generate every split of the protocol and write it under ``out_dir``.
+
+    Each split is cut into chunks of at most ``config.chunk_size`` examples,
+    each stratified on its own and seeded by (seed, split, chunk), so that the
+    result does not depend on ``workers``, the number of processes used.
+    """
     config.validate()
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
     vocab = Vocabulary(config.k)
     families = list(ALL_FAMILIES)
-    root = jax.random.PRNGKey(config.seed)
     manifest: dict[str, Any] = {
         "format": "elementary-transformer/1",
         "config": asdict(config),
@@ -504,9 +541,32 @@ def build_dataset(config: DatasetConfig, out_dir: str | Path, *, log: Any = None
         "splits": {},
     }
     started = time.time()
-    for index, spec in enumerate(split_specs(config)):
-        t0 = time.time()
-        examples, stats = generate_split(spec, config, jax.random.fold_in(root, index))
+    specs = split_specs(config)
+    tasks: list[tuple[SplitSpec, DatasetConfig, int, int]] = []
+    for index, spec in enumerate(specs):
+        for chunk, start in enumerate(range(0, spec.target, config.chunk_size)):
+            size = min(config.chunk_size, spec.target - start)
+            tasks.append((replace(spec, target=size), config, index, chunk))
+    if workers > 1:
+        previous = os.environ.get("JAX_PLATFORMS")
+        os.environ["JAX_PLATFORMS"] = "cpu"
+        # Dispatch the chunks with large structures first and recycle workers to bound their memory.
+        order = sorted(range(len(tasks)), key=lambda i: -tasks[i][0].sizes[1])
+        try:
+            with multiprocessing.get_context("spawn").Pool(workers, maxtasksperchild=4) as pool:
+                ordered = pool.map(_generate_chunk, [tasks[i] for i in order], chunksize=1)
+            results = [ordered[order.index(i)] for i in range(len(tasks))]
+        finally:
+            if previous is None:
+                os.environ.pop("JAX_PLATFORMS", None)
+            else:
+                os.environ["JAX_PLATFORMS"] = previous
+    else:
+        results = [_generate_chunk(task) for task in tasks]
+    for index, spec in enumerate(specs):
+        parts = [r for task, r in zip(tasks, results, strict=True) if task[2] == index]
+        examples = [ex for chunk_examples, _ in parts for ex in chunk_examples]
+        stats = _merge_stats(spec, [st for _, st in parts])
         if config.lean_verify:
             from . import lean
 
@@ -519,15 +579,13 @@ def build_dataset(config: DatasetConfig, out_dir: str | Path, *, log: Any = None
         split_dir.mkdir(exist_ok=True)
         shards = []
         for s, start in enumerate(range(0, max(len(examples), 1), config.shard_size)):
-            chunk = examples[start : start + config.shard_size]
             name = f"shard-{s:05d}"
-            write_shard(split_dir / name, chunk, vocab, families, start, spec.name)
+            write_shard(split_dir / name, examples[start : start + config.shard_size], vocab, families, start, spec.name)
             shards.append(name)
         stats["shards"] = shards
-        stats["seconds"] = round(time.time() - t0, 2)
         manifest["splits"][spec.name] = stats
         if log is not None:
-            log(f"{spec.name}: {stats['generated']}/{spec.target} examples, counts {stats['counts']}, {stats['seconds']} s")
+            log(f"{spec.name}: {stats['generated']}/{spec.target} examples, counts {stats['counts']}")
     manifest["seconds"] = round(time.time() - started, 2)
     (out / "manifest.json").write_text(json.dumps(manifest, indent=2))
     return manifest
@@ -546,7 +604,8 @@ def iter_examples(dataset_dir: str | Path, split: str) -> Iterator[dict[str, Any
     manifest = load_manifest(dataset_dir)
     for shard in manifest["splits"][split]["shards"]:
         base = Path(dataset_dir) / split / shard
-        arrays = np.load(base.with_suffix(".npz"))
+        with np.load(base.with_suffix(".npz")) as npz:
+            arrays = {name: npz[name] for name in npz.files}
         with open(base.with_suffix(".jsonl")) as f:
             metadata = [json.loads(line) for line in f]
         off, foff = arrays["token_offsets"], arrays["formula_offsets"]
