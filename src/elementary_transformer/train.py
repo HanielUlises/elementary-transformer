@@ -364,7 +364,7 @@ def train(tc: TrainConfig, log: Callable[[str], None] = print) -> dict[str, Any]
         }
         history.append(entry)
         log(json.dumps(entry))
-        if score > best["score"]:
+        if score >= best["score"]:  # ties go to the later epoch, whose decoder has trained longer
             best = {"score": score, "epoch": epoch + 1}
             np.savez(out / "params.npz", **mdl.flatten(params))  # type: ignore[arg-type]
     template = mdl.init_params(jax.random.PRNGKey(0), cfg)
